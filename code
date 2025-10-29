@@ -1,0 +1,70 @@
+#include <msp430.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#define LED_PIN BIT0      // P1.0
+#define BTN_PIN BIT1      // P2.1 (aktiv lav)
+
+volatile uint8_t t_flag = 0;
+static volatile uint16_t ms10_ticks;
+static uint32_t seconds = 0;
+
+/* ===== OLED-stubbe ===== */
+static void init_OLED(void) {}
+static void OLED_clear(void) {}
+static void OLED_print_line(uint8_t row, const char* s) { (void)row; (void)s; }
+/* ======================= */
+
+static void init_timerA0(void) {
+  P1DIR |= LED_PIN;
+  P1OUT &= ~LED_PIN;
+
+  P2DIR &= ~BTN_PIN;
+  P2REN |= BTN_PIN;
+  P2OUT |= BTN_PIN;
+
+  TA0CTL = TASSEL_2 | ID_3 | TACLR; // SMCLK, /8
+  TA0CCR0 = 1250 - 1;               // 10 ms
+  TA0CCTL0 = CCIE;
+  TA0CTL |= MC_1;
+
+  __enable_interrupt();
+}
+
+static uint8_t button_pressed(void) {
+  static uint8_t stable = 0xFF;
+  stable = (stable << 1) | ((P2IN & BTN_PIN) ? 1 : 0);
+  return (stable == 0x00);
+}
+
+void setup() {
+  WDTCTL = WDTPW | WDTHOLD;
+  init_timerA0();
+  init_OLED();
+}
+
+void loop() {
+  if (t_flag) {
+    t_flag = 0;
+    seconds++;
+    P1OUT ^= LED_PIN;
+  }
+
+  if (button_pressed()) {
+    seconds = 0;
+    while (!(P2IN & BTN_PIN)) {}
+  }
+
+  char line[24];
+  snprintf(line, sizeof(line), "Tid: %lu s", (unsigned long)seconds);
+  OLED_clear();
+  OLED_print_line(0, line);
+}
+
+extern "C" __attribute__((interrupt(TIMER0_A0_VECTOR)))
+void TIMER0_A0_ISR(void) {
+  if (++ms10_ticks >= 100) {
+    ms10_ticks = 0;
+    t_flag = 1;
+  }
+}
